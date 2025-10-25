@@ -17,6 +17,9 @@ export const users = pgTable("users", {
   activeMinutesGoal: integer("active_minutes_goal").default(30),
   problems: text("problems").array(),
   onboardingCompleted: boolean("onboarding_completed").default(false).notNull(),
+  
+  referralCode: text("referral_code").unique(),
+  referredBy: integer("referred_by").references(() => users.id),
 });
 
 // Focus sessions table
@@ -75,13 +78,19 @@ export const dailyStats = pgTable("daily_stats", {
 });
 
 // Relations
-export const usersRelations = relations(users, ({ many }) => ({
+export const usersRelations = relations(users, ({ many, one }) => ({
   focusSessions: many(focusSessions),
   screenTimeEntries: many(screenTimeEntries),
   healthMetrics: many(healthMetrics),
   friendships: many(friendships, { relationName: "userFriendships" }),
   friendOf: many(friendships, { relationName: "friendOfUser" }),
   dailyStats: many(dailyStats),
+  referrals: many(users, { relationName: "referrer" }),
+  referrer: one(users, {
+    fields: [users.referredBy],
+    references: [users.id],
+    relationName: "referrer",
+  }),
 }));
 
 export const focusSessionsRelations = relations(focusSessions, ({ one }) => ({

@@ -5,6 +5,13 @@ import { insertUserSchema } from "@shared/schema";
 import { z } from "zod";
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Helper function to generate referral code
+  function generateReferralCode(username: string): string {
+    const randomPart = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const userPart = username.substring(0, 3).toUpperCase();
+    return `${userPart}${randomPart}`;
+  }
+
   // Authentication routes
   app.post("/api/auth/signup", async (req, res) => {
     try {
@@ -13,6 +20,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         dailyStepGoal: z.number().optional(),
         activeMinutesGoal: z.number().optional(),
         problems: z.array(z.string()).optional(),
+        referralCode: z.string().optional(),
       });
 
       const data = signupSchema.parse(req.body);
@@ -23,12 +31,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Username already exists" });
       }
 
+      // Check if referral code is valid (if provided)
+      let referredBy: number | undefined;
+      if (data.referralCode) {
+        const referrer = await storage.getUserByReferralCode(data.referralCode);
+        if (referrer) {
+          referredBy = referrer.id;
+        }
+      }
+
       // Hash password (simple hash for demo - in production use bcrypt)
       const hashedPassword = Buffer.from(data.password).toString('base64');
+      
+      // Generate unique referral code for this user
+      const userReferralCode = generateReferralCode(data.username);
       
       const user = await storage.createUser({
         ...data,
         password: hashedPassword,
+        referralCode: userReferralCode,
+        referredBy,
       });
 
       // Set session
@@ -196,6 +218,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(sessions);
     } catch (error) {
       console.error("Get focus sessions error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Referral routes
+  app.get("/api/referrals/stats", async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+
+      if (!userId) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+
+      const stats = await storage.getReferralStats(userId);
+      res.json(stats);
+    } catch (error) {
+      console.error("Get referral stats error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get("/api/referrals/referred-users", async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+
+      if (!userId) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+
+      const referredUsers = await storage.getReferredUsers(userId);
+      
+      // Return users without passwords
+      const usersWithoutPasswords = referredUsers.map(({ password, ...user }) => user);
+      res.json(usersWithoutPasswords);
+    } catch (error) {
+      console.error("Get referred users error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/referrals/validate", async (req, res) => {
+    try {
+      const { code } = req.body;
+
+      if (!code) {
+        return res.status(400).json({ message: "Referral code required" });
+      }
+
+      const referrer = await storage.getUserByReferralCode(code);
+      
+      if (!referrer) {
+        return res.status(404).json({ message: "Invalid referral code" });
+      }
+
+      // Return basic info about the referrer
+      res.json({ 
+        valid: true, 
+        referrerName: referrer.name || referrer.username 
+      });
+    } catch (error) {
+      console.error("Validate referral code error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });

@@ -51,6 +51,11 @@ export interface IStorage {
   createOrUpdateDailyStat(stat: InsertDailyStat): Promise<DailyStat>;
   getUserDailyStat(userId: number, date: Date): Promise<DailyStat | undefined>;
   getUserStreak(userId: number): Promise<number>;
+  
+  // Referrals
+  getUserByReferralCode(code: string): Promise<User | undefined>;
+  getReferredUsers(userId: number): Promise<User[]>;
+  getReferralStats(userId: number): Promise<{ totalReferred: number; activeReferred: number }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -349,6 +354,49 @@ export class DatabaseStorage implements IStorage {
     }
 
     return streak;
+  }
+
+  // Referrals
+  async getUserByReferralCode(code: string): Promise<User | undefined> {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.referralCode, code));
+    return user || undefined;
+  }
+
+  async getReferredUsers(userId: number): Promise<User[]> {
+    return await db
+      .select()
+      .from(users)
+      .where(eq(users.referredBy, userId));
+  }
+
+  async getReferralStats(userId: number): Promise<{ totalReferred: number; activeReferred: number }> {
+    const referredUsers = await this.getReferredUsers(userId);
+    const totalReferred = referredUsers.length;
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const sevenDaysAgo = new Date(today);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const activeUsers = await db
+      .select({ userId: users.id })
+      .from(users)
+      .innerJoin(dailyStats, eq(users.id, dailyStats.userId))
+      .where(
+        and(
+          eq(users.referredBy, userId),
+          gte(dailyStats.date, sevenDaysAgo)
+        )
+      )
+      .groupBy(users.id);
+
+    return {
+      totalReferred,
+      activeReferred: activeUsers.length,
+    };
   }
 }
 
