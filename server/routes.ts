@@ -143,6 +143,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Stats routes
+  app.get("/api/stats/daily", async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+
+      if (!userId) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const stats = await storage.getUserDailyStat(userId, today);
+      res.json(stats || { focusScore: 0, wellnessScore: 0, screenTimeMinutes: 0, focusSessionsCompleted: 0, streak: 0 });
+    } catch (error) {
+      console.error("Get daily stats error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get("/api/stats/streak", async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+
+      if (!userId) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+
+      const streak = await storage.getUserStreak(userId);
+      res.json(streak);
+    } catch (error) {
+      console.error("Get streak error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Focus sessions routes
+  app.get("/api/focus-sessions", async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+
+      if (!userId) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 30);
+      const endDate = new Date();
+
+      const sessions = await storage.getUserFocusSessions(userId, startDate, endDate);
+      res.json(sessions);
+    } catch (error) {
+      console.error("Get focus sessions error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   const httpServer = createServer(app);
 
   return httpServer;

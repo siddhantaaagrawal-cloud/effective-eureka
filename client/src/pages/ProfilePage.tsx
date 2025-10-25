@@ -2,16 +2,62 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import GradientGlow from '@/components/GradientGlow';
-import { Settings, Bell, Shield, HelpCircle, LogOut, Trophy, Target, Award } from 'lucide-react';
+import { Settings, Bell, Shield, HelpCircle, LogOut, Trophy, Target, Award, User } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import avatar from '@assets/generated_images/Male_profile_avatar_professional_8445cdd2.png';
+import { useQuery } from '@tanstack/react-query';
+import { useToast } from '@/hooks/use-toast';
+import { apiRequest, queryClient } from '@/lib/queryClient';
+import { useLocation } from 'wouter';
 
 export default function ProfilePage() {
-  // todo: remove mock functionality
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
+
+  // Fetch current user data
+  const { data: user, isLoading } = useQuery({
+    queryKey: ['/api/auth/me'],
+  });
+
+  // Fetch user stats from today
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  const { data: dailyStats } = useQuery({
+    queryKey: ['/api/stats/daily'],
+    enabled: !!user,
+  });
+
+  const { data: userStreak } = useQuery({
+    queryKey: ['/api/stats/streak'],
+    enabled: !!user,
+  });
+
+  const { data: focusSessions } = useQuery({
+    queryKey: ['/api/focus-sessions'],
+    enabled: !!user,
+  });
+
+  const handleLogout = async () => {
+    try {
+      await apiRequest('POST', '/api/auth/logout', {});
+      queryClient.clear();
+      setLocation('/onboarding');
+      toast({
+        title: 'Logged out successfully',
+      });
+    } catch (error) {
+      toast({
+        title: 'Logout failed',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const achievements = [
-    { icon: Trophy, label: '7 Day Streak', unlocked: true },
-    { icon: Target, label: 'Focus Master', unlocked: true },
+    { icon: Trophy, label: '7 Day Streak', unlocked: (userStreak || 0) >= 7 },
+    { icon: Target, label: 'Focus Master', unlocked: (focusSessions?.length || 0) >= 10 },
     { icon: Award, label: 'Early Bird', unlocked: false },
   ];
 
@@ -22,6 +68,16 @@ export default function ProfilePage() {
     { icon: HelpCircle, label: 'Help & Support', action: () => console.log('Help') },
   ];
 
+  const getInitials = (name: string) => {
+    if (!name) return 'U';
+    return name
+      .split(' ')
+      .map(n => n[0])
+      .join('')
+      .toUpperCase()
+      .substring(0, 2);
+  };
+
   return (
     <div className="relative min-h-screen pb-24">
       <GradientGlow color="orange" position="top" size="lg" />
@@ -29,37 +85,49 @@ export default function ProfilePage() {
       <ScrollArea className="h-[calc(100vh-5rem)]">
         <div className="p-6 space-y-6 max-w-2xl mx-auto">
           {/* Profile Header */}
-          <div className="text-center pt-4">
-            <Avatar className="w-24 h-24 mx-auto mb-4">
-              <AvatarImage src={avatar} alt="Profile" />
-              <AvatarFallback>JC</AvatarFallback>
-            </Avatar>
-            <h1 className="text-2xl font-bold mb-1">James Chen</h1>
-            <p className="text-sm text-muted-foreground mb-4">Member since Jan 2025</p>
-            <div className="flex items-center justify-center gap-2">
-              <Badge variant="secondary" className="bg-primary/10 text-primary">
-                Pro Member
-              </Badge>
-              <Badge variant="secondary">
-                Rank #3
-              </Badge>
+          {isLoading ? (
+            <div className="text-center pt-4">
+              <Skeleton className="w-24 h-24 rounded-full mx-auto mb-4" />
+              <Skeleton className="h-8 w-48 mx-auto mb-2" />
+              <Skeleton className="h-4 w-32 mx-auto" />
             </div>
-          </div>
+          ) : (
+            <div className="text-center pt-4">
+              <Avatar className="w-24 h-24 mx-auto mb-4 bg-muted">
+                {user?.avatar && <AvatarImage src={user.avatar} alt={user.name || user.username} />}
+                <AvatarFallback className="bg-muted text-foreground text-2xl">
+                  {getInitials(user?.name || user?.username || 'User')}
+                </AvatarFallback>
+              </Avatar>
+              <h1 className="text-2xl font-bold mb-1" data-testid="text-user-name">
+                {user?.name || user?.username || 'User'}
+              </h1>
+              <p className="text-sm text-muted-foreground mb-4">
+                Member since {user?.createdAt ? new Date(user.createdAt).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'Recently'}
+              </p>
+            </div>
+          )}
 
           {/* Stats Overview */}
           <Card className="p-6 backdrop-blur-xl bg-card/50 border-white/20">
             <h3 className="text-sm font-semibold mb-4">Your Stats</h3>
             <div className="grid grid-cols-3 gap-4 text-center">
               <div>
-                <div className="text-2xl font-bold tabular-nums">12</div>
+                <div className="text-2xl font-bold tabular-nums" data-testid="text-streak">
+                  {userStreak || 0}
+                </div>
                 <div className="text-xs text-muted-foreground">Day Streak</div>
               </div>
               <div>
-                <div className="text-2xl font-bold tabular-nums">78</div>
-                <div className="text-xs text-muted-foreground">Avg Score</div>
+                <div className="text-2xl font-bold tabular-nums" data-testid="text-avg-score">
+                  {dailyStats?.focusScore || 0}
+                </div>
+                <div className="text-xs text-muted-foreground">Focus Score</div>
               </div>
               <div>
-                <div className="text-2xl font-bold tabular-nums">142</div>
+                <div className="text-2xl font-bold tabular-nums" data-testid="text-total-sessions">
+                  {focusSessions?.length || 0}
+                </div>
                 <div className="text-xs text-muted-foreground">Total Sessions</div>
               </div>
             </div>
@@ -124,7 +192,7 @@ export default function ProfilePage() {
             variant="outline" 
             className="w-full text-destructive hover:bg-destructive/10"
             data-testid="button-logout"
-            onClick={() => console.log('Logout')}
+            onClick={handleLogout}
           >
             <LogOut className="w-4 h-4 mr-2" />
             Log Out

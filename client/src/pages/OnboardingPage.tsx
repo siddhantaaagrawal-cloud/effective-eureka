@@ -26,6 +26,7 @@ import { apiRequest } from '@/lib/queryClient';
 import { useToast } from '@/hooks/use-toast';
 
 type OnboardingData = {
+  name: string;
   username: string;
   password: string;
   currentScreenTime: number;
@@ -49,6 +50,7 @@ export default function OnboardingPage() {
   const { toast } = useToast();
   
   const [data, setData] = useState<OnboardingData>({
+    name: '',
     username: '',
     password: '',
     currentScreenTime: 4,
@@ -60,6 +62,7 @@ export default function OnboardingPage() {
   const signupMutation = useMutation({
     mutationFn: async (signupData: OnboardingData) => {
       const response = await apiRequest('POST', '/api/auth/signup', {
+        name: signupData.name,
         username: signupData.username,
         password: signupData.password,
         dailyScreenTimeGoal: Math.max(1, signupData.currentScreenTime - 1) * 60,
@@ -82,7 +85,7 @@ export default function OnboardingPage() {
     },
   });
 
-  const totalSteps = 6;
+  const totalSteps = 7;
   const progress = (step / totalSteps) * 100;
 
   const handleNext = () => {
@@ -153,6 +156,43 @@ export default function OnboardingPage() {
         return (
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="space-y-3">
+              <h2 className="text-2xl font-bold">What's Your Name?</h2>
+              <p className="text-muted-foreground">
+                Let's personalize your experience
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="name">Full Name</Label>
+                <Input
+                  id="name"
+                  data-testid="input-name"
+                  value={data.name}
+                  onChange={(e) => setData({ ...data, name: e.target.value })}
+                  placeholder="Enter your name"
+                  autoComplete="name"
+                />
+              </div>
+            </div>
+
+            <Button 
+              onClick={handleNext}
+              disabled={!data.name.trim()}
+              size="lg"
+              className="w-full"
+              data-testid="button-continue-name"
+            >
+              Continue
+              <ArrowRight className="ml-2 w-4 h-4" />
+            </Button>
+          </div>
+        );
+
+      case 3:
+        return (
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="space-y-3">
               <h2 className="text-2xl font-bold">Create Your Account</h2>
               <p className="text-muted-foreground">
                 Choose a username and secure password
@@ -199,7 +239,7 @@ export default function OnboardingPage() {
           </div>
         );
 
-      case 3:
+      case 4:
         return (
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="space-y-3">
@@ -244,7 +284,7 @@ export default function OnboardingPage() {
           </div>
         );
 
-      case 4:
+      case 5:
         return (
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="space-y-3">
@@ -297,7 +337,7 @@ export default function OnboardingPage() {
           </div>
         );
 
-      case 5:
+      case 6:
         return (
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="space-y-3">
@@ -373,7 +413,7 @@ export default function OnboardingPage() {
           </div>
         );
 
-      case 6:
+      case 7:
         return (
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="space-y-3">
