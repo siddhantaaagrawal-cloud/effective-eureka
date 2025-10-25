@@ -10,12 +10,6 @@ export const users = pgTable("users", {
   password: text("password").notNull(),
   avatar: text("avatar"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-  
-  dailyScreenTimeGoal: integer("daily_screen_time_goal"),
-  dailyStepGoal: integer("daily_step_goal").default(10000),
-  activeMinutesGoal: integer("active_minutes_goal").default(30),
-  problems: text("problems").array(),
-  onboardingCompleted: boolean("onboarding_completed").default(false).notNull(),
 });
 
 // Focus sessions table
