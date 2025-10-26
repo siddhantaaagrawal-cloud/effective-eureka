@@ -5,94 +5,118 @@ import { insertUserSchema } from "@shared/schema";
 import { z } from "zod";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Helper function to generate referral code
-  function generateReferralCode(username: string): string {
-    const randomPart = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const userPart = username.substring(0, 3).toUpperCase();
-    return `${userPart}${randomPart}`;
+  // Helper function to generate unique 14-digit code
+  function generate14DigitCode(): string {
+    let code = '';
+    for (let i = 0; i < 14; i++) {
+      code += Math.floor(Math.random() * 10);
+    }
+    return code;
   }
 
-  // Authentication routes
-  app.post("/api/auth/signup", async (req, res) => {
+  // Helper function to check if user code is expired (30 days of inactivity)
+  function isCodeExpired(lastActivity: Date): boolean {
+    const now = new Date();
+    const diffInDays = (now.getTime() - lastActivity.getTime()) / (1000 * 60 * 60 * 24);
+    return diffInDays > 30;
+  }
+
+  // Create new user - generates a unique 14-digit code
+  app.post("/api/auth/create", async (req, res) => {
     try {
-      const signupSchema = insertUserSchema.extend({
+      const createSchema = z.object({
         dailyScreenTimeGoal: z.number().optional(),
         dailyStepGoal: z.number().optional(),
         activeMinutesGoal: z.number().optional(),
         problems: z.array(z.string()).optional(),
-        referralCode: z.string().optional(),
+        friendCode: z.string().length(14).optional(),
       });
 
-      const data = signupSchema.parse(req.body);
+      const data = createSchema.parse(req.body);
       
-      // Check if username already exists
-      const existing = await storage.getUserByUsername(data.username);
-      if (existing) {
-        return res.status(400).json({ message: "Username already exists" });
+      // Generate unique 14-digit code
+      let userCode = generate14DigitCode();
+      let existing = await storage.getUserByCode(userCode);
+      
+      // Ensure code is unique
+      while (existing) {
+        userCode = generate14DigitCode();
+        existing = await storage.getUserByCode(userCode);
       }
 
-      // Check if referral code is valid (if provided)
+      // Check if friend code is valid (if provided)
       let referredBy: number | undefined;
-      if (data.referralCode) {
-        const referrer = await storage.getUserByReferralCode(data.referralCode);
-        if (referrer) {
-          referredBy = referrer.id;
+      if (data.friendCode) {
+        const friend = await storage.getUserByCode(data.friendCode);
+        if (friend && !isCodeExpired(friend.lastActivity)) {
+          referredBy = friend.id;
         }
       }
 
-      // Hash password (simple hash for demo - in production use bcrypt)
-      const hashedPassword = Buffer.from(data.password).toString('base64');
-      
-      // Generate unique referral code for this user
-      const userReferralCode = generateReferralCode(data.username);
-      
       const user = await storage.createUser({
-        ...data,
-        password: hashedPassword,
-        referralCode: userReferralCode,
+        userCode,
+        dailyScreenTimeGoal: data.dailyScreenTimeGoal,
+        dailyStepGoal: data.dailyStepGoal,
+        activeMinutesGoal: data.activeMinutesGoal,
+        problems: data.problems,
         referredBy,
       });
+
+      // If a valid friend code was provided, create friendship
+      if (referredBy) {
+        await storage.createFriendship({
+          userId: user.id,
+          friendId: referredBy,
+          status: 'accepted',
+        });
+        
+        // Create reverse friendship
+        await storage.createFriendship({
+          userId: referredBy,
+          friendId: user.id,
+          status: 'accepted',
+        });
+      }
 
       // Set session
       (req.session as any).userId = user.id;
 
-      // Return user without password
-      const { password, ...userWithoutPassword } = user;
-      res.json(userWithoutPassword);
+      res.json(user);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid input", errors: error.errors });
       }
-      console.error("Signup error:", error);
+      console.error("Create user error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });
 
+  // Login with 14-digit code
   app.post("/api/auth/login", async (req, res) => {
     try {
-      const { username, password } = req.body;
+      const { code } = req.body;
 
-      if (!username || !password) {
-        return res.status(400).json({ message: "Username and password required" });
+      if (!code || code.length !== 14) {
+        return res.status(400).json({ message: "14-digit code required" });
       }
 
-      const user = await storage.getUserByUsername(username);
+      const user = await storage.getUserByCode(code);
       if (!user) {
-        return res.status(401).json({ message: "Invalid credentials" });
+        return res.status(401).json({ message: "Invalid code" });
       }
 
-      // Simple hash comparison
-      const hashedPassword = Buffer.from(password).toString('base64');
-      if (user.password !== hashedPassword) {
-        return res.status(401).json({ message: "Invalid credentials" });
+      // Check if code is expired (30 days of inactivity)
+      if (isCodeExpired(user.lastActivity)) {
+        return res.status(401).json({ message: "Code expired due to 30 days of inactivity" });
       }
+
+      // Update last activity
+      await storage.updateUserActivity(user.id);
 
       // Set session
       (req.session as any).userId = user.id;
 
-      // Return user without password
-      const { password: _, ...userWithoutPassword } = user;
-      res.json(userWithoutPassword);
+      res.json(user);
     } catch (error) {
       console.error("Login error:", error);
       res.status(500).json({ message: "Internal server error" });
@@ -112,9 +136,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "User not found" });
       }
 
-      // Return user without password
-      const { password, ...userWithoutPassword } = user;
-      res.json(userWithoutPassword);
+      // Update last activity
+      await storage.updateUserActivity(user.id);
+
+      res.json(user);
     } catch (error) {
       console.error("Get user error:", error);
       res.status(500).json({ message: "Internal server error" });
@@ -143,6 +168,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         problems: z.array(z.string()).optional(),
         onboardingCompleted: z.boolean().optional(),
         avatar: z.string().optional(),
+        name: z.string().optional(),
       });
 
       const data = updateSchema.parse(req.body);
@@ -153,14 +179,99 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "User not found" });
       }
 
-      // Return user without password
-      const { password, ...userWithoutPassword } = updatedUser;
-      res.json(userWithoutPassword);
+      res.json(updatedUser);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid input", errors: error.errors });
       }
       console.error("Update user error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Friends routes
+  app.get("/api/friends", async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+
+      if (!userId) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+
+      const friends = await storage.getUserFriends(userId);
+      res.json(friends);
+    } catch (error) {
+      console.error("Get friends error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/friends/add", async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+
+      if (!userId) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+
+      const { code } = req.body;
+
+      if (!code || code.length !== 14) {
+        return res.status(400).json({ message: "14-digit code required" });
+      }
+
+      const friend = await storage.getUserByCode(code);
+      if (!friend) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      if (friend.id === userId) {
+        return res.status(400).json({ message: "Cannot add yourself as a friend" });
+      }
+
+      // Check if code is expired
+      if (isCodeExpired(friend.lastActivity)) {
+        return res.status(400).json({ message: "This user's code has expired due to inactivity" });
+      }
+
+      // Check if already friends
+      const existingFriends = await storage.getUserFriends(userId);
+      if (existingFriends.some(f => f.id === friend.id)) {
+        return res.status(400).json({ message: "Already friends with this user" });
+      }
+
+      // Create friendship (both directions)
+      await storage.createFriendship({
+        userId: userId,
+        friendId: friend.id,
+        status: 'accepted',
+      });
+
+      await storage.createFriendship({
+        userId: friend.id,
+        friendId: userId,
+        status: 'accepted',
+      });
+
+      res.json(friend);
+    } catch (error) {
+      console.error("Add friend error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get("/api/friends/leaderboard", async (req, res) => {
+    try {
+      const userId = (req.session as any).userId;
+
+      if (!userId) {
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+
+      const leaderboard = await storage.getLeaderboard(userId, 50);
+      res.json(leaderboard);
+    } catch (error) {
+      console.error("Get leaderboard error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });
@@ -248,37 +359,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const referredUsers = await storage.getReferredUsers(userId);
-      
-      // Return users without passwords
-      const usersWithoutPasswords = referredUsers.map(({ password, ...user }) => user);
-      res.json(usersWithoutPasswords);
+      res.json(referredUsers);
     } catch (error) {
       console.error("Get referred users error:", error);
-      res.status(500).json({ message: "Internal server error" });
-    }
-  });
-
-  app.post("/api/referrals/validate", async (req, res) => {
-    try {
-      const { code } = req.body;
-
-      if (!code) {
-        return res.status(400).json({ message: "Referral code required" });
-      }
-
-      const referrer = await storage.getUserByReferralCode(code);
-      
-      if (!referrer) {
-        return res.status(404).json({ message: "Invalid referral code" });
-      }
-
-      // Return basic info about the referrer
-      res.json({ 
-        valid: true, 
-        referrerName: referrer.name || referrer.username 
-      });
-    } catch (error) {
-      console.error("Validate referral code error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });

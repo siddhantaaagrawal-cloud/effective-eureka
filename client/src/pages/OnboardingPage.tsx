@@ -18,7 +18,9 @@ import {
   Zap,
   CheckCircle2,
   ArrowRight,
-  Target
+  Target,
+  Copy,
+  Key
 } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { useMutation } from '@tanstack/react-query';
@@ -27,8 +29,7 @@ import { useToast } from '@/hooks/use-toast';
 
 type OnboardingData = {
   name: string;
-  username: string;
-  password: string;
+  friendCode: string;
   currentScreenTime: number;
   problems: string[];
   dailyStepGoal: number;
@@ -48,37 +49,44 @@ export default function OnboardingPage() {
   const [step, setStep] = useState(1);
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const [generatedCode, setGeneratedCode] = useState<string>('');
   
   const [data, setData] = useState<OnboardingData>({
     name: '',
-    username: '',
-    password: '',
+    friendCode: '',
     currentScreenTime: 4,
     problems: [],
     dailyStepGoal: 10000,
     activeMinutesGoal: 30,
   });
 
-  const signupMutation = useMutation({
-    mutationFn: async (signupData: OnboardingData) => {
-      const response = await apiRequest('POST', '/api/auth/signup', {
-        name: signupData.name,
-        username: signupData.username,
-        password: signupData.password,
-        dailyScreenTimeGoal: Math.max(1, signupData.currentScreenTime - 1) * 60,
-        problems: signupData.problems,
-        dailyStepGoal: signupData.dailyStepGoal,
-        activeMinutesGoal: signupData.activeMinutesGoal,
-        onboardingCompleted: true,
+  const createAccountMutation = useMutation({
+    mutationFn: async (accountData: OnboardingData) => {
+      const response = await apiRequest('POST', '/api/auth/create', {
+        dailyScreenTimeGoal: Math.max(1, accountData.currentScreenTime - 1) * 60,
+        problems: accountData.problems,
+        dailyStepGoal: accountData.dailyStepGoal,
+        activeMinutesGoal: accountData.activeMinutesGoal,
+        friendCode: accountData.friendCode || undefined,
       });
-      return response.json();
+      const user = await response.json();
+      
+      if (accountData.name) {
+        await apiRequest('PATCH', '/api/users/me', {
+          name: accountData.name,
+          onboardingCompleted: true,
+        });
+      }
+      
+      return user;
     },
-    onSuccess: () => {
-      setLocation('/');
+    onSuccess: (user) => {
+      setGeneratedCode(user.userCode);
+      setStep(8);
     },
     onError: (error: any) => {
       toast({
-        title: 'Signup failed',
+        title: 'Account creation failed',
         description: error.message || 'Please try again',
         variant: 'destructive',
       });
@@ -95,7 +103,7 @@ export default function OnboardingPage() {
   };
 
   const handleComplete = () => {
-    signupMutation.mutate(data);
+    createAccountMutation.mutate(data);
   };
 
   const toggleProblem = (problemId: string) => {
@@ -105,6 +113,18 @@ export default function OnboardingPage() {
         ? prev.problems.filter(p => p !== problemId)
         : [...prev.problems, problemId]
     }));
+  };
+
+  const copyCode = () => {
+    navigator.clipboard.writeText(generatedCode);
+    toast({
+      title: 'Code copied!',
+      description: 'Your 14-digit code has been copied to clipboard',
+    });
+  };
+
+  const goToDashboard = () => {
+    setLocation('/');
   };
 
   // Calculate lifestyle predictions
@@ -134,7 +154,7 @@ export default function OnboardingPage() {
               </div>
               <h1 className="text-3xl font-bold">Welcome to Your Journey</h1>
               <p className="text-muted-foreground">
-                Let's understand your digital wellbeing and set you up for success
+                We'll generate a unique code for you - no passwords needed!
               </p>
             </div>
             
@@ -158,13 +178,13 @@ export default function OnboardingPage() {
             <div className="space-y-3">
               <h2 className="text-2xl font-bold">What's Your Name?</h2>
               <p className="text-muted-foreground">
-                Let's personalize your experience
+                Optional - helps personalize your experience
               </p>
             </div>
 
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="name">Full Name</Label>
+                <Label htmlFor="name">Full Name (Optional)</Label>
                 <Input
                   id="name"
                   data-testid="input-name"
@@ -178,7 +198,6 @@ export default function OnboardingPage() {
 
             <Button 
               onClick={handleNext}
-              disabled={!data.name.trim()}
               size="lg"
               className="w-full"
               data-testid="button-continue-name"
@@ -193,45 +212,37 @@ export default function OnboardingPage() {
         return (
           <div className="space-y-6 animate-in fade-in duration-500">
             <div className="space-y-3">
-              <h2 className="text-2xl font-bold">Create Your Account</h2>
+              <h2 className="text-2xl font-bold">Have a Friend Code?</h2>
               <p className="text-muted-foreground">
-                Choose a username and secure password
+                Enter a friend's 14-digit code to connect (optional)
               </p>
             </div>
 
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="username">Username</Label>
+                <Label htmlFor="friendCode">Friend's 14-Digit Code (Optional)</Label>
                 <Input
-                  id="username"
-                  data-testid="input-username"
-                  value={data.username}
-                  onChange={(e) => setData({ ...data, username: e.target.value })}
-                  placeholder="Enter your username"
+                  id="friendCode"
+                  data-testid="input-friend-code"
+                  value={data.friendCode}
+                  onChange={(e) => setData({ ...data, friendCode: e.target.value.replace(/\D/g, '').slice(0, 14) })}
+                  placeholder="12345678901234"
+                  maxLength={14}
                   autoComplete="off"
                 />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  data-testid="input-password"
-                  value={data.password}
-                  onChange={(e) => setData({ ...data, password: e.target.value })}
-                  placeholder="Enter your password"
-                  autoComplete="new-password"
-                />
+                {data.friendCode && data.friendCode.length !== 14 && (
+                  <p className="text-xs text-muted-foreground">
+                    {14 - data.friendCode.length} more digits needed
+                  </p>
+                )}
               </div>
             </div>
 
             <Button 
               onClick={handleNext}
-              disabled={!data.username || data.password.length < 6}
               size="lg"
               className="w-full"
-              data-testid="button-continue-account"
+              data-testid="button-continue-friend-code"
             >
               Continue
               <ArrowRight className="ml-2 w-4 h-4" />
@@ -424,7 +435,6 @@ export default function OnboardingPage() {
             </div>
 
             <div className="space-y-4">
-              {/* Screen Time Impact */}
               <Card className="p-5 backdrop-blur-xl bg-destructive/5 border-destructive/20">
                 <div className="flex items-start gap-3">
                   <div className="p-2 bg-destructive/10 rounded-lg">
@@ -458,7 +468,6 @@ export default function OnboardingPage() {
                 </Card>
               )}
 
-              {/* Positive Fitness Impact */}
               <Card className="p-5 backdrop-blur-xl bg-chart-2/5 border-chart-2/20">
                 <div className="flex items-start gap-3">
                   <div className="p-2 bg-chart-2/10 rounded-lg">
@@ -493,12 +502,76 @@ export default function OnboardingPage() {
 
             <Button 
               onClick={handleComplete}
-              disabled={signupMutation.isPending}
+              disabled={createAccountMutation.isPending}
               size="lg"
               className="w-full"
               data-testid="button-complete-onboarding"
             >
-              {signupMutation.isPending ? 'Creating Your Account...' : 'Start My Journey'}
+              {createAccountMutation.isPending ? 'Creating Your Account...' : 'Create My Account'}
+              <ArrowRight className="ml-2 w-4 h-4" />
+            </Button>
+          </div>
+        );
+
+      case 8:
+        return (
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="text-center space-y-3">
+              <div className="w-16 h-16 mx-auto bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl flex items-center justify-center">
+                <CheckCircle2 className="w-8 h-8 text-white" />
+              </div>
+              <h1 className="text-3xl font-bold">Welcome Aboard!</h1>
+              <p className="text-muted-foreground">
+                Your account has been created
+              </p>
+            </div>
+
+            <Card className="p-6 backdrop-blur-xl bg-primary/5 border-primary/20">
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 justify-center">
+                  <Key className="w-5 h-5 text-primary" />
+                  <h3 className="font-semibold">Your Unique 14-Digit Code</h3>
+                </div>
+                
+                <div className="bg-background/50 p-4 rounded-lg">
+                  <div className="text-3xl font-mono font-bold text-center tracking-wider" data-testid="text-user-code">
+                    {generatedCode}
+                  </div>
+                </div>
+
+                <Button
+                  onClick={copyCode}
+                  variant="outline"
+                  className="w-full"
+                  data-testid="button-copy-code"
+                >
+                  <Copy className="w-4 h-4 mr-2" />
+                  Copy Code
+                </Button>
+
+                <div className="space-y-2 pt-2">
+                  <p className="text-sm text-muted-foreground">
+                    <span className="font-semibold">Important:</span> Save this code! You'll need it to:
+                  </p>
+                  <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+                    <li>Log in to your account</li>
+                    <li>Connect with friends</li>
+                    <li>Access your data</li>
+                  </ul>
+                  <p className="text-xs text-muted-foreground pt-2">
+                    Your code will expire after 30 days of inactivity
+                  </p>
+                </div>
+              </div>
+            </Card>
+
+            <Button 
+              onClick={goToDashboard}
+              size="lg"
+              className="w-full"
+              data-testid="button-go-dashboard"
+            >
+              Go to Dashboard
               <ArrowRight className="ml-2 w-4 h-4" />
             </Button>
           </div>
@@ -515,18 +588,18 @@ export default function OnboardingPage() {
       <GradientGlow color="purple" position="bottom" size="md" />
 
       <div className="relative z-10 min-h-screen flex flex-col">
-        {/* Progress Bar */}
-        <div className="p-4">
-          <div className="max-w-md mx-auto">
-            <Progress value={progress} className="h-1" />
-            <div className="flex justify-between mt-2">
-              <span className="text-xs text-muted-foreground">Step {step} of {totalSteps}</span>
-              <span className="text-xs text-muted-foreground">{Math.round(progress)}%</span>
+        {step <= 7 && (
+          <div className="p-4">
+            <div className="max-w-md mx-auto">
+              <Progress value={progress} className="h-1" />
+              <div className="flex justify-between mt-2">
+                <span className="text-xs text-muted-foreground">Step {step} of {totalSteps}</span>
+                <span className="text-xs text-muted-foreground">{Math.round(progress)}%</span>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
-        {/* Content */}
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="w-full max-w-md">
             {renderStep()}

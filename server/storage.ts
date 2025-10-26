@@ -24,9 +24,10 @@ import { eq, and, gte, lte, desc, sql } from "drizzle-orm";
 export interface IStorage {
   // Users
   getUser(id: number): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
+  getUserByCode(userCode: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: number, updates: Partial<User>): Promise<User | undefined>;
+  updateUserActivity(id: number): Promise<void>;
   
   // Focus Sessions
   createFocusSession(session: InsertFocusSession): Promise<FocusSession>;
@@ -53,7 +54,6 @@ export interface IStorage {
   getUserStreak(userId: number): Promise<number>;
   
   // Referrals
-  getUserByReferralCode(code: string): Promise<User | undefined>;
   getReferredUsers(userId: number): Promise<User[]>;
   getReferralStats(userId: number): Promise<{ totalReferred: number; activeReferred: number }>;
 }
@@ -65,8 +65,8 @@ export class DatabaseStorage implements IStorage {
     return user || undefined;
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.username, username));
+  async getUserByCode(userCode: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.userCode, userCode));
     return user || undefined;
   }
 
@@ -85,6 +85,13 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.id, id))
       .returning();
     return updated || undefined;
+  }
+
+  async updateUserActivity(id: number): Promise<void> {
+    await db
+      .update(users)
+      .set({ lastActivity: new Date() })
+      .where(eq(users.id, id));
   }
 
   // Focus Sessions
@@ -221,13 +228,7 @@ export class DatabaseStorage implements IStorage {
 
   async getUserFriends(userId: number): Promise<User[]> {
     const results = await db
-      .select({
-        id: users.id,
-        username: users.username,
-        password: users.password,
-        avatar: users.avatar,
-        createdAt: users.createdAt,
-      })
+      .select()
       .from(friendships)
       .innerJoin(users, eq(friendships.friendId, users.id))
       .where(
@@ -237,7 +238,7 @@ export class DatabaseStorage implements IStorage {
         )
       );
     
-    return results;
+    return results.map(r => r.users);
   }
 
   async getLeaderboard(userId: number, limit: number = 10): Promise<Array<User & { score: number; rank: number }>> {
@@ -259,11 +260,7 @@ export class DatabaseStorage implements IStorage {
 
     const results = await db
       .select({
-        id: users.id,
-        username: users.username,
-        password: users.password,
-        avatar: users.avatar,
-        createdAt: users.createdAt,
+        user: users,
         score: sql<number>`COALESCE(${dailyStats.focusScore}, 0)`.as('score')
       })
       .from(users)
@@ -279,7 +276,7 @@ export class DatabaseStorage implements IStorage {
       .limit(limit);
 
     return results.map((r, index) => ({
-      ...r,
+      ...r.user,
       score: Number(r.score) || 0,
       rank: index + 1
     }));
@@ -357,14 +354,6 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Referrals
-  async getUserByReferralCode(code: string): Promise<User | undefined> {
-    const [user] = await db
-      .select()
-      .from(users)
-      .where(eq(users.referralCode, code));
-    return user || undefined;
-  }
-
   async getReferredUsers(userId: number): Promise<User[]> {
     return await db
       .select()

@@ -6,11 +6,11 @@ import { z } from "zod";
 // Users table
 export const users = pgTable("users", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-  username: text("username").notNull().unique(),
-  password: text("password").notNull(),
+  userCode: text("user_code").notNull().unique(),
   name: text("name"),
   avatar: text("avatar"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  lastActivity: timestamp("last_activity").defaultNow().notNull(),
   
   dailyScreenTimeGoal: integer("daily_screen_time_goal"),
   dailyStepGoal: integer("daily_step_goal").default(10000),
@@ -18,7 +18,6 @@ export const users = pgTable("users", {
   problems: text("problems").array(),
   onboardingCompleted: boolean("onboarding_completed").default(false).notNull(),
   
-  referralCode: text("referral_code").unique(),
   referredBy: integer("referred_by").references(() => users.id),
 });
 
@@ -136,11 +135,11 @@ export const dailyStatsRelations = relations(dailyStats, ({ one }) => ({
 
 // Insert schemas
 export const insertUserSchema = createInsertSchema(users, {
-  username: z.string().min(1),
-  password: z.string().min(6),
+  userCode: z.string().length(14),
 }).omit({
   id: true,
   createdAt: true,
+  lastActivity: true,
 });
 
 export const insertFocusSessionSchema = createInsertSchema(focusSessions).omit({
