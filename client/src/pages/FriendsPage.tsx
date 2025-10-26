@@ -12,10 +12,13 @@ import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Trophy, Medal, UserPlus, Copy, Key } from 'lucide-react';
 import LeaderboardItem from '@/components/LeaderboardItem';
 import GradientGlow from '@/components/GradientGlow';
+import PhoneInput from '@/components/PhoneInput';
 import { useToast } from '@/hooks/use-toast';
 
 export default function FriendsPage() {
   const [friendCodeInput, setFriendCodeInput] = useState('');
+  const [friendPhoneInput, setFriendPhoneInput] = useState('');
+  const [addMethod, setAddMethod] = useState<'code' | 'phone'>('code');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const { toast } = useToast();
 
@@ -32,8 +35,8 @@ export default function FriendsPage() {
   });
 
   const addFriendMutation = useMutation({
-    mutationFn: async (code: string) => {
-      const response = await apiRequest('POST', '/api/friends/add', { code });
+    mutationFn: async (params: { code?: string; phoneNumber?: string }) => {
+      const response = await apiRequest('POST', '/api/friends/add', params);
       return response.json();
     },
     onSuccess: (newFriend) => {
@@ -41,9 +44,10 @@ export default function FriendsPage() {
       queryClient.invalidateQueries({ queryKey: ['/api/friends/leaderboard'] });
       setIsAddDialogOpen(false);
       setFriendCodeInput('');
+      setFriendPhoneInput('');
       toast({
         title: 'Friend added!',
-        description: `You're now connected with ${newFriend.name || 'this user'}`,
+        description: `You're now connected with ${newFriend.name || newFriend.phoneNumber || 'this user'}`,
       });
     },
     onError: (error: any) => {
@@ -56,8 +60,10 @@ export default function FriendsPage() {
   });
 
   const handleAddFriend = () => {
-    if (friendCodeInput.length === 14) {
-      addFriendMutation.mutate(friendCodeInput);
+    if (addMethod === 'code' && friendCodeInput.length === 14) {
+      addFriendMutation.mutate({ code: friendCodeInput });
+    } else if (addMethod === 'phone' && friendPhoneInput.length >= 10) {
+      addFriendMutation.mutate({ phoneNumber: friendPhoneInput });
     }
   };
 
@@ -142,36 +148,59 @@ export default function FriendsPage() {
                         <DialogHeader>
                           <DialogTitle>Add a Friend</DialogTitle>
                           <DialogDescription>
-                            Enter your friend's 14-digit code to connect with them
+                            Connect with friends using their phone number or code
                           </DialogDescription>
                         </DialogHeader>
-                        <div className="space-y-4 pt-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="friendCode">Friend's 14-Digit Code</Label>
-                            <Input
-                              id="friendCode"
-                              data-testid="input-add-friend-code"
-                              value={friendCodeInput}
-                              onChange={(e) => setFriendCodeInput(e.target.value.replace(/\D/g, '').slice(0, 14))}
-                              placeholder="12345678901234"
-                              maxLength={14}
-                              autoComplete="off"
+                        <Tabs value={addMethod} onValueChange={(v) => setAddMethod(v as 'code' | 'phone')} className="pt-4">
+                          <TabsList className="grid w-full grid-cols-2">
+                            <TabsTrigger value="phone" data-testid="tab-add-by-phone-leaderboard">By Phone Number</TabsTrigger>
+                            <TabsTrigger value="code" data-testid="tab-add-by-code-leaderboard">By Code</TabsTrigger>
+                          </TabsList>
+                          <TabsContent value="phone" className="space-y-4">
+                            <PhoneInput
+                              value={friendPhoneInput}
+                              onChange={setFriendPhoneInput}
+                              label=""
+                              placeholder="Enter number"
+                              testIdPrefix="friend-leaderboard"
                             />
-                            {friendCodeInput && friendCodeInput.length !== 14 && (
-                              <p className="text-xs text-muted-foreground">
-                                {14 - friendCodeInput.length} more digits needed
-                              </p>
-                            )}
-                          </div>
-                          <Button
-                            onClick={handleAddFriend}
-                            disabled={friendCodeInput.length !== 14 || addFriendMutation.isPending}
-                            className="w-full"
-                            data-testid="button-submit-add-friend"
-                          >
-                            {addFriendMutation.isPending ? 'Adding...' : 'Add Friend'}
-                          </Button>
-                        </div>
+                            <Button
+                              onClick={handleAddFriend}
+                              disabled={friendPhoneInput.length < 10 || addFriendMutation.isPending}
+                              className="w-full"
+                              data-testid="button-submit-add-friend"
+                            >
+                              {addFriendMutation.isPending ? 'Adding...' : 'Add Friend'}
+                            </Button>
+                          </TabsContent>
+                          <TabsContent value="code" className="space-y-4">
+                            <div className="space-y-2">
+                              <Label htmlFor="friendCode">Friend's 14-Digit Code</Label>
+                              <Input
+                                id="friendCode"
+                                data-testid="input-add-friend-code"
+                                value={friendCodeInput}
+                                onChange={(e) => setFriendCodeInput(e.target.value.replace(/\D/g, '').slice(0, 14))}
+                                placeholder="12345678901234"
+                                maxLength={14}
+                                autoComplete="off"
+                              />
+                              {friendCodeInput && friendCodeInput.length !== 14 && (
+                                <p className="text-xs text-muted-foreground">
+                                  {14 - friendCodeInput.length} more digits needed
+                                </p>
+                              )}
+                            </div>
+                            <Button
+                              onClick={handleAddFriend}
+                              disabled={friendCodeInput.length !== 14 || addFriendMutation.isPending}
+                              className="w-full"
+                              data-testid="button-submit-add-friend"
+                            >
+                              {addFriendMutation.isPending ? 'Adding...' : 'Add Friend'}
+                            </Button>
+                          </TabsContent>
+                        </Tabs>
                       </DialogContent>
                     </Dialog>
                   </Card>
@@ -204,36 +233,59 @@ export default function FriendsPage() {
                   <DialogHeader>
                     <DialogTitle>Add a Friend</DialogTitle>
                     <DialogDescription>
-                      Enter your friend's 14-digit code to connect with them
+                      Connect with friends using their phone number or code
                     </DialogDescription>
                   </DialogHeader>
-                  <div className="space-y-4 pt-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="friendCodeDialog">Friend's 14-Digit Code</Label>
-                      <Input
-                        id="friendCodeDialog"
-                        data-testid="input-friend-code-dialog"
-                        value={friendCodeInput}
-                        onChange={(e) => setFriendCodeInput(e.target.value.replace(/\D/g, '').slice(0, 14))}
-                        placeholder="12345678901234"
-                        maxLength={14}
-                        autoComplete="off"
+                  <Tabs value={addMethod} onValueChange={(v) => setAddMethod(v as 'code' | 'phone')} className="pt-4">
+                    <TabsList className="grid w-full grid-cols-2">
+                      <TabsTrigger value="phone" data-testid="tab-add-by-phone">By Phone Number</TabsTrigger>
+                      <TabsTrigger value="code" data-testid="tab-add-by-code">By Code</TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="phone" className="space-y-4">
+                      <PhoneInput
+                        value={friendPhoneInput}
+                        onChange={setFriendPhoneInput}
+                        label=""
+                        placeholder="Enter number"
+                        testIdPrefix="friend"
                       />
-                      {friendCodeInput && friendCodeInput.length !== 14 && (
-                        <p className="text-xs text-muted-foreground">
-                          {14 - friendCodeInput.length} more digits needed
-                        </p>
-                      )}
-                    </div>
-                    <Button
-                      onClick={handleAddFriend}
-                      disabled={friendCodeInput.length !== 14 || addFriendMutation.isPending}
-                      className="w-full"
-                      data-testid="button-add-friend-submit"
-                    >
-                      {addFriendMutation.isPending ? 'Adding...' : 'Add Friend'}
-                    </Button>
-                  </div>
+                      <Button
+                        onClick={handleAddFriend}
+                        disabled={friendPhoneInput.length < 10 || addFriendMutation.isPending}
+                        className="w-full"
+                        data-testid="button-submit-add-friend-phone"
+                      >
+                        {addFriendMutation.isPending ? 'Adding...' : 'Add Friend'}
+                      </Button>
+                    </TabsContent>
+                    <TabsContent value="code" className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="friendCodeDialog">Friend's 14-Digit Code</Label>
+                        <Input
+                          id="friendCodeDialog"
+                          data-testid="input-friend-code-dialog"
+                          value={friendCodeInput}
+                          onChange={(e) => setFriendCodeInput(e.target.value.replace(/\D/g, '').slice(0, 14))}
+                          placeholder="12345678901234"
+                          maxLength={14}
+                          autoComplete="off"
+                        />
+                        {friendCodeInput && friendCodeInput.length !== 14 && (
+                          <p className="text-xs text-muted-foreground">
+                            {14 - friendCodeInput.length} more digits needed
+                          </p>
+                        )}
+                      </div>
+                      <Button
+                        onClick={handleAddFriend}
+                        disabled={friendCodeInput.length !== 14 || addFriendMutation.isPending}
+                        className="w-full"
+                        data-testid="button-add-friend-submit"
+                      >
+                        {addFriendMutation.isPending ? 'Adding...' : 'Add Friend'}
+                      </Button>
+                    </TabsContent>
+                  </Tabs>
                 </DialogContent>
               </Dialog>
 

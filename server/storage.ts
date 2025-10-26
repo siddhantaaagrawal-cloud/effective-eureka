@@ -5,6 +5,7 @@ import {
   healthMetrics,
   friendships,
   dailyStats,
+  otpVerifications,
   type User, 
   type InsertUser,
   type FocusSession,
@@ -16,7 +17,9 @@ import {
   type Friendship,
   type InsertFriendship,
   type DailyStat,
-  type InsertDailyStat
+  type InsertDailyStat,
+  type OtpVerification,
+  type InsertOtpVerification
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, gte, lte, desc, sql } from "drizzle-orm";
@@ -25,9 +28,16 @@ export interface IStorage {
   // Users
   getUser(id: number): Promise<User | undefined>;
   getUserByCode(userCode: string): Promise<User | undefined>;
+  getUserByPhoneNumber(phoneNumber: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: number, updates: Partial<User>): Promise<User | undefined>;
   updateUserActivity(id: number): Promise<void>;
+  
+  // OTP Verification
+  createOtpVerification(otp: InsertOtpVerification): Promise<OtpVerification>;
+  getLatestOtp(phoneNumber: string): Promise<OtpVerification | undefined>;
+  markOtpAsVerified(id: number): Promise<void>;
+  deleteExpiredOtps(): Promise<void>;
   
   // Focus Sessions
   createFocusSession(session: InsertFocusSession): Promise<FocusSession>;
@@ -92,6 +102,43 @@ export class DatabaseStorage implements IStorage {
       .update(users)
       .set({ lastActivity: new Date() })
       .where(eq(users.id, id));
+  }
+
+  async getUserByPhoneNumber(phoneNumber: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.phoneNumber, phoneNumber));
+    return user || undefined;
+  }
+
+  // OTP Verification
+  async createOtpVerification(otp: InsertOtpVerification): Promise<OtpVerification> {
+    const [verification] = await db
+      .insert(otpVerifications)
+      .values([otp])
+      .returning();
+    return verification;
+  }
+
+  async getLatestOtp(phoneNumber: string): Promise<OtpVerification | undefined> {
+    const [otp] = await db
+      .select()
+      .from(otpVerifications)
+      .where(eq(otpVerifications.phoneNumber, phoneNumber))
+      .orderBy(desc(otpVerifications.createdAt))
+      .limit(1);
+    return otp || undefined;
+  }
+
+  async markOtpAsVerified(id: number): Promise<void> {
+    await db
+      .update(otpVerifications)
+      .set({ verified: true })
+      .where(eq(otpVerifications.id, id));
+  }
+
+  async deleteExpiredOtps(): Promise<void> {
+    await db
+      .delete(otpVerifications)
+      .where(lte(otpVerifications.expiresAt, new Date()));
   }
 
   // Focus Sessions

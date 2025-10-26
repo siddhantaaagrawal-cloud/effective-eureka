@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertUserSchema } from "@shared/schema";
 import { z } from "zod";
+import { generateOTP, sendOTP } from "./twilio";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Helper function to generate unique 14-digit code
@@ -20,6 +21,200 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const diffInDays = (now.getTime() - lastActivity.getTime()) / (1000 * 60 * 60 * 24);
     return diffInDays > 30;
   }
+
+  // Send OTP to phone number
+  app.post("/api/auth/send-otp", async (req, res) => {
+    try {
+      const { phoneNumber } = req.body;
+
+      if (!phoneNumber) {
+        return res.status(400).json({ message: "Phone number required" });
+      }
+
+      // Clean expired OTPs first
+      await storage.deleteExpiredOtps();
+
+      // Generate 6-digit OTP
+      const otp = generateOTP();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+      // Save OTP to database
+      await storage.createOtpVerification({
+        phoneNumber,
+        otp,
+        expiresAt,
+      });
+
+      // Send OTP via Twilio
+      const sent = await sendOTP(phoneNumber, otp);
+
+      if (!sent) {
+        return res.status(500).json({ message: "Failed to send OTP" });
+      }
+
+      res.json({ message: "OTP sent successfully" });
+    } catch (error) {
+      console.error("Send OTP error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Verify OTP and sign up
+  app.post("/api/auth/signup", async (req, res) => {
+    try {
+      const signupSchema = z.object({
+        phoneNumber: z.string(),
+        otp: z.string().length(6),
+        dailyScreenTimeGoal: z.number().optional(),
+        dailyStepGoal: z.number().optional(),
+        activeMinutesGoal: z.number().optional(),
+        problems: z.array(z.string()).optional(),
+        friendCode: z.string().length(14).optional(),
+        name: z.string().optional(),
+      });
+
+      const data = signupSchema.parse(req.body);
+
+      // Check if user already exists
+      const existingUser = await storage.getUserByPhoneNumber(data.phoneNumber);
+      if (existingUser) {
+        return res.status(400).json({ message: "Phone number already registered" });
+      }
+
+      // Verify OTP
+      const latestOtp = await storage.getLatestOtp(data.phoneNumber);
+      if (!latestOtp) {
+        return res.status(401).json({ message: "No OTP found for this phone number" });
+      }
+
+      if (latestOtp.otp !== data.otp) {
+        return res.status(401).json({ message: "Invalid OTP" });
+      }
+
+      if (new Date() > latestOtp.expiresAt) {
+        return res.status(401).json({ message: "OTP expired" });
+      }
+
+      // Mark OTP as verified
+      await storage.markOtpAsVerified(latestOtp.id);
+
+      // Generate unique 14-digit code
+      let userCode = generate14DigitCode();
+      let existing = await storage.getUserByCode(userCode);
+      while (existing) {
+        userCode = generate14DigitCode();
+        existing = await storage.getUserByCode(userCode);
+      }
+
+      // Check if friend code is valid (if provided)
+      let referredBy: number | undefined;
+      if (data.friendCode) {
+        const friend = await storage.getUserByCode(data.friendCode);
+        if (friend && !isCodeExpired(friend.lastActivity)) {
+          referredBy = friend.id;
+        }
+      }
+
+      // Create user
+      const user = await storage.createUser({
+        userCode,
+        phoneNumber: data.phoneNumber,
+        name: data.name,
+        dailyScreenTimeGoal: data.dailyScreenTimeGoal,
+        dailyStepGoal: data.dailyStepGoal,
+        activeMinutesGoal: data.activeMinutesGoal,
+        problems: data.problems,
+        referredBy,
+      });
+
+      // If a valid friend code was provided, create friendship
+      if (referredBy) {
+        await storage.createFriendship({
+          userId: user.id,
+          friendId: referredBy,
+          status: 'accepted',
+        });
+        
+        await storage.createFriendship({
+          userId: referredBy,
+          friendId: user.id,
+          status: 'accepted',
+        });
+      }
+
+      // Set session
+      (req.session as any).userId = user.id;
+      await new Promise<void>((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+
+      res.json(user);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid input", errors: error.errors });
+      }
+      console.error("Signup error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Verify OTP and sign in
+  app.post("/api/auth/signin", async (req, res) => {
+    try {
+      const signinSchema = z.object({
+        phoneNumber: z.string(),
+        otp: z.string().length(6),
+      });
+
+      const data = signinSchema.parse(req.body);
+
+      // Check if user exists
+      const user = await storage.getUserByPhoneNumber(data.phoneNumber);
+      if (!user) {
+        return res.status(404).json({ message: "No account found with this phone number" });
+      }
+
+      // Verify OTP
+      const latestOtp = await storage.getLatestOtp(data.phoneNumber);
+      if (!latestOtp) {
+        return res.status(401).json({ message: "No OTP found for this phone number" });
+      }
+
+      if (latestOtp.otp !== data.otp) {
+        return res.status(401).json({ message: "Invalid OTP" });
+      }
+
+      if (new Date() > latestOtp.expiresAt) {
+        return res.status(401).json({ message: "OTP expired" });
+      }
+
+      // Mark OTP as verified
+      await storage.markOtpAsVerified(latestOtp.id);
+
+      // Update last activity
+      await storage.updateUserActivity(user.id);
+
+      // Set session
+      (req.session as any).userId = user.id;
+      await new Promise<void>((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+
+      res.json(user);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid input", errors: error.errors });
+      }
+      console.error("Signin error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
 
   // Create new user - generates a unique 14-digit code
   app.post("/api/auth/create", async (req, res) => {
@@ -78,8 +273,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Set session
+      // Set session and save it explicitly
       (req.session as any).userId = user.id;
+      await new Promise<void>((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
 
       res.json(user);
     } catch (error) {
@@ -113,8 +314,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update last activity
       await storage.updateUserActivity(user.id);
 
-      // Set session
+      // Set session and save it explicitly
       (req.session as any).userId = user.id;
+      await new Promise<void>((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
 
       res.json(user);
     } catch (error) {
@@ -214,15 +421,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Not authenticated" });
       }
 
-      const { code } = req.body;
+      const { code, phoneNumber } = req.body;
 
-      if (!code || code.length !== 14) {
-        return res.status(400).json({ message: "14-digit code required" });
+      let friend: any = null;
+
+      // Try to find friend by phone number first
+      if (phoneNumber) {
+        friend = await storage.getUserByPhoneNumber(phoneNumber);
+        if (!friend) {
+          return res.status(404).json({ message: "No user found with this phone number" });
+        }
       }
-
-      const friend = await storage.getUserByCode(code);
-      if (!friend) {
-        return res.status(404).json({ message: "User not found" });
+      // Fall back to 14-digit code
+      else if (code && code.length === 14) {
+        friend = await storage.getUserByCode(code);
+        if (!friend) {
+          return res.status(404).json({ message: "User not found" });
+        }
+      } else {
+        return res.status(400).json({ message: "Phone number or 14-digit code required" });
       }
 
       if (friend.id === userId) {

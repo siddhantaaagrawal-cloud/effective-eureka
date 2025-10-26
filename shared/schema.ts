@@ -7,6 +7,7 @@ import { z } from "zod";
 export const users = pgTable("users", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   userCode: text("user_code").notNull().unique(),
+  phoneNumber: text("phone_number").unique(),
   name: text("name"),
   avatar: text("avatar"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -19,6 +20,16 @@ export const users = pgTable("users", {
   onboardingCompleted: boolean("onboarding_completed").default(false).notNull(),
   
   referredBy: integer("referred_by").references(() => users.id),
+});
+
+// OTP verification table
+export const otpVerifications = pgTable("otp_verifications", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  phoneNumber: text("phone_number").notNull(),
+  otp: text("otp").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  verified: boolean("verified").default(false).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 // Focus sessions table
@@ -163,6 +174,11 @@ export const insertDailyStatSchema = createInsertSchema(dailyStats).omit({
   id: true,
 });
 
+export const insertOtpVerificationSchema = createInsertSchema(otpVerifications).omit({
+  id: true,
+  createdAt: true,
+});
+
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -181,3 +197,6 @@ export type Friendship = typeof friendships.$inferSelect;
 
 export type InsertDailyStat = z.infer<typeof insertDailyStatSchema>;
 export type DailyStat = typeof dailyStats.$inferSelect;
+
+export type InsertOtpVerification = z.infer<typeof insertOtpVerificationSchema>;
+export type OtpVerification = typeof otpVerifications.$inferSelect;
